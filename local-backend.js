@@ -6,7 +6,7 @@
    use("sample") rejects, and the page already hides those buttons when it is missing. */
 (function () {
   "use strict";
-  var DB_NAME = "gym-trial-data", DOCS = "docs", BLOBS = "blobs";
+  var DB_NAME = "gym-trial-data" + location.pathname.replace(/[^/]*$/, ""), DOCS = "docs", BLOBS = "blobs";
   var docs = new Map();          // path -> plain object
   var listeners = [];            // {kind:"doc"|"col", key, cb}
   var urls = new Map();          // photo id -> object URL
@@ -121,6 +121,17 @@
     }
   };
   window.__blobUrl = function (id) { return urls.get(id) || ""; };
+  window.__wipeAll = function () {
+    return ready.then(function () {
+      return new Promise(function (resolve, reject) {
+        if (!idb) { docs.clear(); return resolve(); }
+        var t = idb.transaction([DOCS, BLOBS], "readwrite");
+        t.objectStore(DOCS).clear(); t.objectStore(BLOBS).clear();
+        t.oncomplete = function () { docs.clear(); resolve(); };
+        t.onerror = t.onabort = function () { reject(t.error || new Error("couldn't clear")); };
+      });
+    });
+  };
 
   var ready = openIdb().then(function (d) {
     idb = d;
