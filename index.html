@@ -494,6 +494,8 @@ body.dragging,body.dragging *{-webkit-user-select:none;user-select:none}
 .rest-in .btn{background:transparent;color:var(--bg);border-color:rgba(127,127,127,.6)}
 .rest-in .btn.primary{background:var(--bg);color:var(--ink);border-color:var(--bg)}
 .restbar.end .rest-in{background:var(--accent);color:var(--on-accent)}
+body.restflash::after{content:"Rest over · next set";position:fixed;inset:0;z-index:95;display:grid;place-items:center;font:700 1.6rem var(--f-display);color:#fff;background:rgba(47,158,91,.92);animation:rflash 2.6s ease forwards;pointer-events:none}
+@keyframes rflash{0%{opacity:0}8%{opacity:1}22%{opacity:.35}36%{opacity:1}75%{opacity:1}100%{opacity:0}}
 .restbar.end .rest-in .note,.restbar.end .rest-in .btn{color:var(--on-accent);border-color:var(--on-accent)}
 .summary{display:grid;gap:10px}
 .prs{margin:0;padding-left:18px;display:grid;gap:3px}
@@ -1056,6 +1058,8 @@ body.dragging,body.dragging *{-webkit-user-select:none;user-select:none}
       <h3>Button colour</h3>
       <div class="row" id="ac-chips"><button class="sw" data-ac="" style="--sw:#6b6c70" aria-label="Graphite" title="Graphite"></button><button class="sw" data-ac="green" style="--sw:#2f9e5b" aria-label="Green" title="Green"></button><button class="sw" data-ac="blue" style="--sw:#2f74d6" aria-label="Blue" title="Blue"></button><button class="sw" data-ac="teal" style="--sw:#16918e" aria-label="Teal" title="Teal"></button><button class="sw" data-ac="purple" style="--sw:#7a55d6" aria-label="Purple" title="Purple"></button><button class="sw" data-ac="orange" style="--sw:#d9741c" aria-label="Orange" title="Orange"></button><button class="sw" data-ac="red" style="--sw:#d6453b" aria-label="Red" title="Red"></button><button class="sw" data-ac="pink" style="--sw:#d6438d" aria-label="Pink" title="Pink"></button></div>
       <p class="note" id="ac-name"></p>
+      <h3>Workouts</h3>
+      <label class="chkline"><input type="checkbox" id="ka-on"> Keep the screen on during a workout, so the rest timer can beep and flash when it ends</label>
     </div>
     <div class="card" id="set-card">
       <h2>Backup</h2>
@@ -2645,10 +2649,17 @@ $("w-done").addEventListener("click",e=>{if(e.target.id==="w-done-x")$("w-done")
 /* rest timer */
 let restEnd=0,restLen=0,restI=null,actx=null;
 function beep(){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();[0,0.25,0.5].forEach(t=>{const o=actx.createOscillator(),g=actx.createGain();o.frequency.value=880;o.connect(g);g.connect(actx.destination);g.gain.setValueAtTime(0.0001,actx.currentTime+t);g.gain.exponentialRampToValueAtTime(0.3,actx.currentTime+t+0.02);g.gain.exponentialRampToValueAtTime(0.0001,actx.currentTime+t+0.18);o.start(actx.currentTime+t);o.stop(actx.currentTime+t+0.2)})}catch(e){}try{navigator.vibrate&&navigator.vibrate([200,100,200])}catch(e){}}
-function startRest(sec){try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume&&actx.resume()}catch(e){}
+/* keep the screen on during a workout so the rest timer can sound (iPhone stops timers when it locks) */
+let SCRLOCK=null;
+async function keepAwake(){if(L.keepAwake===false||SCRLOCK||!("wakeLock" in navigator)||document.visibilityState!=="visible")return;try{SCRLOCK=await navigator.wakeLock.request("screen");SCRLOCK.addEventListener("release",()=>{SCRLOCK=null})}catch(e){SCRLOCK=null}}
+function releaseAwake(){try{SCRLOCK&&SCRLOCK.release()}catch(e){}SCRLOCK=null}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible"&&W)keepAwake()});
+setInterval(()=>{if(!W&&SCRLOCK)releaseAwake()},5000);
+document.addEventListener("click",e=>{if(e.target.closest&&e.target.closest("#pv-start,[data-ok],#w-live")&&W!==undefined)setTimeout(()=>{if(W)keepAwake()},50)},true);
+function startRest(sec){keepAwake();try{actx=actx||new (window.AudioContext||window.webkitAudioContext)();actx.resume&&actx.resume()}catch(e){}
   restLen=sec;restEnd=Date.now()+sec*1000;$("rest").hidden=false;$("rest").classList.remove("end");clearInterval(restI);restI=setInterval(tickRest,250);tickRest()}
 function tickRest(){const left=(restEnd-Date.now())/1000;$("rest-t").textContent=mmss(left);$("rest-fill").style.width=Math.max(0,left/restLen*100)+"%";
-  if(left<=0){clearInterval(restI);$("rest").classList.add("end");$("rest-t").textContent="Go";beep();setTimeout(()=>{if(restEnd<=Date.now())$("rest").hidden=true},6000)}}
+  if(left<=0){clearInterval(restI);$("rest").classList.add("end");$("rest-t").textContent="Go";beep();document.body.classList.remove("restflash");void document.body.offsetWidth;document.body.classList.add("restflash");setTimeout(()=>document.body.classList.remove("restflash"),2600);setTimeout(()=>{if(restEnd<=Date.now())$("rest").hidden=true},6000)}}
 function stopRest(){clearInterval(restI);$("rest").hidden=true}
 $("rest-m").addEventListener("click",()=>{restEnd-=15000;tickRest()});
 $("rest-p").addEventListener("click",()=>{restEnd+=15000;restLen+=15;if($("rest").classList.contains("end")){$("rest").classList.remove("end");clearInterval(restI);restI=setInterval(tickRest,250)}tickRest()});
@@ -2900,13 +2911,13 @@ function goTo(a,b){if(a==="food"&&b)return show(b);show(a,b)}
 TABS.forEach(t=>$("tab-"+t).addEventListener("click",()=>{show(t);window.scrollTo({top:0})}));
 
 /* ---------- backup, settings, calendar ---------- */
-const APP_VERSION="Trial · 16 Nov 2026 (b)";
+const APP_VERSION="Trial · 17 Nov 2026";
 function applyPrefs(){const av=$("app-ver");if(av)av.textContent=`Version ${APP_VERSION}\nAddress: ${location.origin}${location.pathname.replace(/index\.html$/,"")}\nSaved data is kept for this address only.`;const r=document.documentElement,z=+L.zoom||1;if(window.__fit)window.__fit();if(L.accent)r.setAttribute("data-accent",L.accent);else r.removeAttribute("data-accent");
   if(L.theme==="light"||L.theme==="dark")r.setAttribute("data-theme",L.theme);else r.removeAttribute("data-theme");
   document.querySelectorAll("[data-z]").forEach(b=>b.setAttribute("aria-pressed",String(+b.dataset.z===z)));
   document.querySelectorAll("[data-ac]").forEach(b=>{const on=b.dataset.ac===(L.accent||"");b.setAttribute("aria-pressed",String(on));if(on&&$("ac-name"))$("ac-name").textContent=b.title});
   document.querySelectorAll("[data-th]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.th===(L.theme||""))));
-  if($("nh-on"))$("nh-on").checked=L.nightHelp!==false;if(!PF)renderProfile();const bl=$("bk-last");if(bl){const ago=L.lastBackup?Math.round((pd(TODAY)-pd(L.lastBackup))/864e5):null;
+  if($("nh-on"))$("nh-on").checked=L.nightHelp!==false;if($("ka-on"))$("ka-on").checked=L.keepAwake!==false;if(!PF)renderProfile();const bl=$("bk-last");if(bl){const ago=L.lastBackup?Math.round((pd(TODAY)-pd(L.lastBackup))/864e5):null;
     bl.textContent=L.lastBackup?`Last backup: ${nice(L.lastBackup)}${ago>=14?" (over two weeks ago, do another)":""}`:"You haven't made a backup yet."}}
 async function deliverFile(file){
   try{if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:file.name});return true}}catch(e){if(e&&e.name==="AbortError")return false}
@@ -4142,6 +4153,7 @@ document.addEventListener("click",async e=>{const t=e.target.closest&&e.target.c
   if(rows.length<2){m.textContent="Nothing logged there yet.";return}
   const ok=await deliverFile(new File(["﻿"+toCSV(rows)],`gym-${k}-${TODAY}.csv`,{type:"text/csv"}));m.textContent=ok?`Saved ${rows.length-1} row${rows.length>2?"s":""}. Open it in Excel, Numbers or Google Sheets.`:"Cancelled."});
 /* ---------- night-shift helper setting ---------- */
+document.addEventListener("change",e=>{if(e.target.id==="ka-on"){L.keepAwake=e.target.checked;saveL();if(!e.target.checked)releaseAwake();return}});
 document.addEventListener("change",e=>{if(e.target.id!=="nh-on")return;L.nightHelp=e.target.checked;saveL();renderDayAll()});
 
 /* ---------- warm-up sets ---------- */
