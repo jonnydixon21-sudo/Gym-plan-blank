@@ -2653,8 +2653,18 @@ function newSession(tpl){if(typeof EDIT!=="undefined"&&EDIT&&EDIT.saved!==false)
   SWAP_EX=null;AI_ALTS={};
   saveLive(true);renderLive();startTick();lockScreen();window.scrollTo({top:0});
 }
-function mkEx(name,groups,note){
-  groups=groups&&groups.length?groups:[[3,"8-12"]];
+/* Rep range per exercise: set in Exercises (Edit or + Add exercise). Used when the exercise is added or swapped in, and saving a new one changes it in every workout */
+const REP_OPTS=["3-5","4-6","5-8","6-8","6-10","8-10","8-12","10-12","10-15","12-15","15-20","20-30"];
+const okReps=r=>/^\d{1,2}(-\d{1,2})?$/.test(String(r||""))&&(!String(r).includes("-")||+String(r).split("-")[0]<=+String(r).split("-")[1]);
+function exDefault(name){const o=D.exdb&&D.exdb[norm(name)];return o&&okReps(o.reps)?{reps:o.reps,sets:+o.sets||null}:null}
+function repsInSplit(name){const k=norm(name),out=[];TEMPLATES.forEach(t=>{const c=tplOf(t.title);((c&&c.ex)||[]).forEach(e=>{if(norm(e.name)===k)out.push({w:c.title,g:e.groups})})});return out}
+async function setRepsEverywhere(name,r){const k=norm(name),prog=D.program||{},days={...(prog.days||{})};let n=0;
+  TEMPLATES.forEach(t=>{const c=tplOf(t.title);if(!c||!c.ex.some(e=>norm(e.name)===k))return;days[t.key]=c.ex.map(e=>norm(e.name)===k?{...e,groups:e.groups.map(([s])=>[s,r])}:e);n++});
+  if(n){D.program={...prog,days,log:[...(prog.log||[]),{date:TODAY,text:`${name}: rep range ${r} in every workout`}]};applyNames();if(db){try{await db.doc("prefs/program").set(D.program)}catch(err){}}}
+  if(W&&W.exercises.some(e=>norm(e.name)===k)){W.exercises.forEach(e=>{if(norm(e.name)!==k)return;e.groups=e.groups.map(([s])=>[s,r]);e.sets.forEach(x=>{if(!x.done)x.target=r})});saveLive();renderLive()}
+  try{renderStart()}catch(err){}return n}
+function mkEx(name,groups,note){const dft=exDefault(name);
+  groups=groups&&groups.length?groups:[[dft&&dft.sets||3,dft?dft.reps:"8-12"]];
   return {name,note:note||"",groups,sets:targets(groups).map(t=>({kg:"",reps:"",target:t,done:false}))};
 }
 function knownExercises(){const s=new Set();Object.values(D.exdb||{}).forEach(v=>v.name&&s.add(v.name));TEMPLATES.forEach(t=>t.ex.forEach(e=>s.add(e.name)));D.workouts.forEach(w=>(w.exercises||[]).forEach(e=>s.add(e.name)));return [...s].sort((a,b)=>a.localeCompare(b))}
@@ -2750,7 +2760,7 @@ async function editUndo(){const d=EDIT;if(!d)return;clearTimeout(ED_T);
     D.program={...prog,days,names,log:[...(prog.log||[]),{date:TODAY,text:`Undid changes to ${d.orig.title}`}]};applyNames();if(db){try{await db.doc("prefs/program").set(D.program)}catch(err){}}}
   EDIT=null;renderStart();renderProgSugs()}
 $("split-card").addEventListener("input",e=>{if(!EDIT)return;const t=e.target,i=t.dataset.i;
-  if(t.id==="ed-name")EDIT.name=t.value;else if(t.classList.contains("ed-n"))EDIT.ex[+i].name=t.value;else if(t.classList.contains("ed-s")){EDIT.ex[+i].sets=t.value;t.classList.toggle("bad",!!t.value.trim()&&!parseSets(t.value))}else return;
+  if(t.id==="ed-name")EDIT.name=t.value;else if(t.classList.contains("ed-n")){const r=EDIT.ex[+i];r.name=t.value;const dft=exDefault(t.value);if(dft&&(r.sets==="2x8-12"||r.auto)){r.sets=`${dft.sets||2}x${dft.reps}`;r.auto=1;const si=document.querySelector(`.ed-s[data-i="${i}"]`);if(si)si.value=r.sets}}else if(t.classList.contains("ed-s")){EDIT.ex[+i].sets=t.value;delete EDIT.ex[+i].auto;t.classList.toggle("bad",!!t.value.trim()&&!parseSets(t.value))}else return;
   ED_FOCUS=t.id==="ed-name"?{sel:"#ed-name",v:t.value}:{sel:`.${t.classList.contains("ed-n")?"ed-n":"ed-s"}[data-i="${i}"]`,v:t.value};edSoon()});
 $("split-card").addEventListener("click",async e=>{if(W)return;
   const ce=e.target.closest("[data-edit]");if(ce){editOpen(ce.dataset.edit);return}
@@ -2840,9 +2850,10 @@ $("w-live").addEventListener("click",async e=>{
     const back=norm(name)===norm(orig);const g=groupOf(ex),a=g&&ALTG[g].x.find(x=>norm(x[0])===norm(name));
     const tp=TEMPLATES.flatMap(x=>x.ex).find(x=>norm(x.name)===norm(name));
     ex.name=name;ex.from=back?undefined:orig;ex.note=back&&tp?tp.note:(a?a[1]:(FULL_CUES[name]||(tp&&tp.note)||""));
+    {const dft=exDefault(name);if(dft){ex.groups=ex.groups.map(([n])=>[n,dft.reps]);ex.sets.forEach(x=>{if(!x.done)x.target=dft.reps})}}
     if(!ex.from)delete ex.from;
     /* "always" changes this workout itself, so Split, Details view and Start a workout all show the same thing */
-    if(always){const tp0=TEMPLATES.find(x=>x.title===W.title);if(tp0){const cur=tplOf(tp0.title),prog=D.program||{};const ex2=cur.ex.map(e=>norm(e.name)===norm(orig)||norm(e.name)===norm(ex.from||"")?{...e,name,note:ex.note||""}:e);
+    if(always){const tp0=TEMPLATES.find(x=>x.title===W.title);if(tp0){const cur=tplOf(tp0.title),prog=D.program||{};const ex2=cur.ex.map(e=>norm(e.name)===norm(orig)||norm(e.name)===norm(ex.from||"")?{...e,name,note:ex.note||"",...(exDefault(name)?{groups:e.groups.map(([n])=>[n,exDefault(name).reps])}:{})}:e);
       D.program={...prog,days:{...(prog.days||{}),[tp0.key]:ex2},log:[...(prog.log||[]),{date:TODAY,text:`${W.title}: ${orig} changed to ${name}`}]};applyNames();if(db){try{await db.doc("prefs/program").set(D.program)}catch(err){}}
       if(typeof D.exswaps[orig]==="string"){const map={...D.exswaps};delete map[orig];D.exswaps=map;if(db){try{await db.doc("prefs/swaps").set({map})}catch(err){}}}
       ex.from=undefined;delete ex.from}}
@@ -3380,7 +3391,7 @@ window.addEventListener("popstate",()=>{if(document.body.dataset.tab==="settings
 function burnOn(){return L.burnOn!==undefined?!!L.burnOn:!IS_TRIAL}
 document.addEventListener("change",e=>{if(e.target.id!=="simplew-on")return;L.simpleW=e.target.checked;saveL();applyPrefs()});
 document.addEventListener("change",e=>{if(e.target.id!=="burn-on")return;L.burnOn=e.target.checked;saveL();applyPrefs();try{renderWeek()}catch(er){}try{renderInOut()}catch(er){}});
-const APP_VERSION="Trial · 28 Nov 2026 (a)";
+const APP_VERSION="Trial · 28 Nov 2026 (b)";
 function applyPrefs(){const av=$("app-ver");if(av)av.textContent=`Version ${APP_VERSION}\nAddress: ${location.origin}${location.pathname.replace(/index\.html$/,"")}\nSaved data is kept for this address only.`;const r=document.documentElement,z=+L.zoom||1;if(window.__fit)window.__fit();if(L.accent)r.setAttribute("data-accent",L.accent);else r.removeAttribute("data-accent");
   if(L.theme==="light"||L.theme==="dark")r.setAttribute("data-theme",L.theme);else r.removeAttribute("data-theme");
   r.setAttribute("data-hfont",IS_TRIAL?(L.hfont||"sport"):"sport");document.querySelectorAll("[data-hf]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.hf===(L.hfont||"sport"))));
@@ -4036,29 +4047,37 @@ function renderLibrary(){const el=$("lib-list");if(!el)return;const all=libNames
   el.innerHTML=order.map(g=>`<div class="aisle"><h3>${esc(g)} <span class="note">(${by[g].length})</span></h3>${by[g].map(x=>{const i=x.i;
     if(LIB_EDIT&&LIB_EDIT.k===x.k)return libEditor(LIB_EDIT);
     return `<div class="libitem"><div><b>${esc(x.n)}</b><small class="note">${i?[i.s&&i.s.length?"Also: "+i.s.map(g=>g+" "+exW(i,g)).join(", "):"",i.eq,i.cat].filter(Boolean).join(" · "):"Muscles not set, so it isn't counted in volume"}${i&&i.src==="guess"?' · <span class="pill warn">Guessed</span>':""}${i&&i.src==="you"?' · <span class="pill">Edited</span>':""}</small></div><button class="x" type="button" data-libedit="${esc(x.k)}">Edit</button></div>`}).join("")}</div>`).join("")||`<div class="empty">No exercises match.</div>`}
+function libGrab(){const d=LIB_EDIT;if(!d)return;if($("lib-reps"))d.reps=$("lib-reps").value.trim().replace(/\s/g,"").replace(/[–—]/g,"-");if($("lib-sets"))d.sets=+$("lib-sets").value}
 function libEditor(d){const opt=(arr,v)=>arr.map(a=>`<option ${a===v?"selected":""}>${esc(a)}</option>`).join("");
   return `<div class="libitem edit ed"><label class="note">Name<input id="lib-name" value="${esc(d.n)}" maxlength="50" placeholder="e.g. Cable crunch">${d.isNew?"":`<span class="note">Renaming changes it everywhere: your workouts, past sessions, PBs, notes and rest times.</span>`}</label>
   <div class="g2"><label class="note">Main muscle<select id="lib-p">${opt(MGROUPS,d.p)}</select></label><label class="note">Equipment<select id="lib-eq">${opt(EQUIP,d.eq)}</select></label></div>
   <label class="note">Type<select id="lib-cat">${opt(EXCATS,d.cat)}</select></label>
+  <div class="g2"><label class="note">Rep range<input id="lib-reps" list="rep-opts" value="${esc(d.reps||"")}" placeholder="e.g. 6-8" maxlength="5" autocomplete="off"></label><label class="note">Sets when you add it<select id="lib-sets">${[1,2,3,4,5,6].map(n=>`<option ${n===(+d.sets||(d.isNew?3:2))?"selected":""}>${n}</option>`).join("")}</select></label></div>
+  <datalist id="rep-opts">${REP_OPTS.map(r=>`<option value="${r}">`).join("")}</datalist>
+  ${d.isNew?`<p class="note">Used when you add it to a workout or swap it in.</p>`:(()=>{const w=repsInSplit(d.n);return `<p class="note">${w.length?`In your workouts now: ${w.map(x=>`${esc(x.w)} ${esc(setsText(x.g).replace(/x/g,"×"))}`).join(", ")}. Saving a different rep range changes it in all of them (sets stay the same).`:"Not in any of your workouts yet. Used when you add it or swap it in."}</p>`})()}
   <div class="note">Also works (counts as indirect sets)</div><div class="row">${MGROUPS.filter(g=>g!==d.p).map(g=>`<button type="button" class="chip" data-libs="${esc(g)}" aria-pressed="${d.s.includes(g)}">${esc(g)}</button>`).join("")}</div>
   ${d.s.length?`<div class="note">How much of a set each one gets</div>${d.s.map(g=>`<label class="adjrow"><span>${esc(g)}</span><select data-libw="${esc(g)}"><option value="">Default (${indDefault()})</option>${[0.25,0.5,0.75,1].map(v=>`<option value="${v}" ${d.w&&+d.w[g]===v?"selected":""}>${v}</option>`).join("")}</select><span></span></label>`).join("")}`:""}
   <div class="row"><button class="btn primary small" type="button" id="lib-save">Save</button><button class="btn ghost small" type="button" id="lib-cancel">Cancel</button>${!d.isNew&&D.exdb&&D.exdb[d.k]?`<button class="btn ghost small" type="button" id="lib-reset">${EXDB_BASE[d.k]?"Reset to default":"Delete"}</button>`:""}</div><p class="note" id="lib-msg"></p></div>`}
 async function saveExdb(){if(db){try{await db.doc("prefs/exdb").set({map:D.exdb})}catch(e){}}renderLibrary();renderAnalytics();renderReady()}
 document.addEventListener("click",async e=>{const t=e.target.closest("button");if(!t||!t.closest("#view-library"))return;
-  if(t.id==="lib-new"){LIB_EDIT={k:"__new",isNew:true,n:"",p:"Lats",s:[],eq:"Machine",cat:"Isolation"};LIB_Q="";$("lib-q").value="";renderLibrary();
+  if(t.id==="lib-new"){LIB_EDIT={k:"__new",isNew:true,n:"",p:"Lats",s:[],eq:"Machine",cat:"Isolation",reps:"8-12",sets:3};LIB_Q="";$("lib-q").value="";renderLibrary();
     if(!$("lib-name")){$("lib-list").insertAdjacentHTML("afterbegin",libEditor(LIB_EDIT))}$("lib-name").focus();return}
-  if(t.dataset.libedit){const n=libNames().find(x=>x.k===t.dataset.libedit),i=exInfo(n.n)||{p:"Lats",s:[],eq:"Machine",cat:"Isolation"};LIB_EDIT={k:n.k,n:n.n,p:i.p,s:[...(i.s||[])],w:{...(i.w||{})},eq:i.eq||"Machine",cat:i.cat||"Isolation"};renderLibrary();return}
+  if(t.dataset.libedit){const n=libNames().find(x=>x.k===t.dataset.libedit),i=exInfo(n.n)||{p:"Lats",s:[],eq:"Machine",cat:"Isolation"};const w0=repsInSplit(n.n),o0=(D.exdb||{})[n.k]||{},r0=okReps(o0.reps)?o0.reps:w0.length?w0[0].g[0][1]:"",s0=+o0.sets||(w0.length?w0[0].g.reduce((a,g)=>a+g[0],0):2);
+    LIB_EDIT={k:n.k,n:n.n,p:i.p,s:[...(i.s||[])],w:{...(i.w||{})},eq:i.eq||"Machine",cat:i.cat||"Isolation",reps:r0,sets:Math.min(6,s0),reps0:r0};renderLibrary();return}
   if(!LIB_EDIT)return;
-  if(t.dataset.libs){const g=t.dataset.libs;LIB_EDIT.s=LIB_EDIT.s.includes(g)?LIB_EDIT.s.filter(x=>x!==g):[...LIB_EDIT.s,g];LIB_EDIT.p=$("lib-p").value;LIB_EDIT.eq=$("lib-eq").value;LIB_EDIT.cat=$("lib-cat").value;if($("lib-name"))LIB_EDIT.n=$("lib-name").value;const box=t.closest(".libitem");box.outerHTML=libEditor(LIB_EDIT);return}
+  if(t.dataset.libs){const g=t.dataset.libs;LIB_EDIT.s=LIB_EDIT.s.includes(g)?LIB_EDIT.s.filter(x=>x!==g):[...LIB_EDIT.s,g];LIB_EDIT.p=$("lib-p").value;LIB_EDIT.eq=$("lib-eq").value;LIB_EDIT.cat=$("lib-cat").value;if($("lib-name"))LIB_EDIT.n=$("lib-name").value;libGrab();const box=t.closest(".libitem");box.outerHTML=libEditor(LIB_EDIT);return}
   if(t.id==="lib-cancel"){LIB_EDIT=null;renderLibrary();return}
   if(t.id==="lib-reset"){const m={...D.exdb};delete m[LIB_EDIT.k];D.exdb=m;LIB_EDIT=null;await saveExdb();return}
-  if(t.id==="lib-save"){const d=LIB_EDIT;d.p=$("lib-p").value;d.eq=$("lib-eq").value;d.cat=$("lib-cat").value;d.s=d.s.filter(g=>g!==d.p);
+  if(t.id==="lib-save"){const d=LIB_EDIT;d.p=$("lib-p").value;d.eq=$("lib-eq").value;d.cat=$("lib-cat").value;d.s=d.s.filter(g=>g!==d.p);libGrab();
+    if(d.reps&&!okReps(d.reps)){$("lib-msg").textContent="Rep range should look like 6-8 or 10.";return}
     if(d.isNew){d.n=$("lib-name").value.trim();if(!d.n){$("lib-msg").textContent="Give it a name.";return}d.k=norm(d.n)}
     else{const nn=$("lib-name").value.trim().replace(/\s+/g," ");if(!nn){$("lib-msg").textContent="Give it a name.";return}
       if(nn!==d.n){if(norm(nn)!==d.k&&libNames().some(x=>x.k===norm(nn))&&t.dataset.c!=="1"){t.dataset.c="1";t.textContent="Merge and save";$("lib-msg").textContent=`${nn} already exists. Saving joins the two, so their history becomes one exercise.`;return}
         const old=d.n;await renameExercise(old,nn);const ok=d.k;d.n=nn;d.k=norm(nn);if(ok!==d.k){const m={...D.exdb};delete m[ok];if(EXDB_BASE[ok])m[ok]={...EXDB_BASE[ok],name:old,hidden:true};D.exdb=m}}}
-    const w={};Object.entries(d.w||{}).forEach(([g,v])=>{if(d.s.includes(g)&&v!==""&&v!=null)w[g]=+v});D.exdb={...D.exdb,[d.k]:{name:d.n,p:d.p,s:d.s,eq:d.eq,cat:d.cat,...(Object.keys(w).length?{w}:{})}};LIB_EDIT=null;await saveExdb()}});
-document.addEventListener("change",e=>{if(e.target.dataset&&e.target.dataset.libw!=null&&LIB_EDIT){LIB_EDIT.w={...(LIB_EDIT.w||{}),[e.target.dataset.libw]:e.target.value};return}if(e.target.id==="lib-p"&&LIB_EDIT){LIB_EDIT.p=e.target.value;LIB_EDIT.s=LIB_EDIT.s.filter(g=>g!==LIB_EDIT.p);LIB_EDIT.eq=$("lib-eq").value;LIB_EDIT.cat=$("lib-cat").value;if($("lib-name"))LIB_EDIT.n=$("lib-name").value;
+    const w={};Object.entries(d.w||{}).forEach(([g,v])=>{if(d.s.includes(g)&&v!==""&&v!=null)w[g]=+v});D.exdb={...D.exdb,[d.k]:{name:d.n,p:d.p,s:d.s,eq:d.eq,cat:d.cat,...(Object.keys(w).length?{w}:{}),...(d.reps?{reps:d.reps,sets:+d.sets||2}:{})}};
+    const changed=d.reps&&repsInSplit(d.n).some(x=>x.g.some(g=>g[1]!==d.reps));LIB_EDIT=null;await saveExdb();
+    if(changed){const n=await setRepsEverywhere(d.n,d.reps);const m=document.getElementById("lib-imp-msg");if(m&&n){m.textContent=`${d.n} is now ${d.reps} reps in ${n} workout${n>1?"s":""}.`;setTimeout(()=>{if(m)m.textContent=""},6000)}}}});
+document.addEventListener("change",e=>{if(e.target.dataset&&e.target.dataset.libw!=null&&LIB_EDIT){LIB_EDIT.w={...(LIB_EDIT.w||{}),[e.target.dataset.libw]:e.target.value};return}if(e.target.id==="lib-p"&&LIB_EDIT){LIB_EDIT.p=e.target.value;LIB_EDIT.s=LIB_EDIT.s.filter(g=>g!==LIB_EDIT.p);LIB_EDIT.eq=$("lib-eq").value;LIB_EDIT.cat=$("lib-cat").value;if($("lib-name"))LIB_EDIT.n=$("lib-name").value;libGrab();
   const box=e.target.closest(".libitem");box.outerHTML=libEditor(LIB_EDIT)}});
 document.addEventListener("input",e=>{if(e.target.id==="lib-q"){LIB_Q=e.target.value;LIB_EDIT=null;renderLibrary()}});
 
